@@ -71,9 +71,10 @@
   
   let hiScore = Number(localStorage.getItem('ss_hi')||0)||0; hiEl.textContent = `최고 ${hiScore}`;
 
-  let state = 'idle'; // idle, charging, flying
+  let state = 'idle';
   let tPrev=0, score=0, currentCombo=0;
   let chargeStartT = 0;
+  let isGameActive = false;
   
   let stone = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, r: 10, inWater: false };
   const ripples = [];
@@ -94,7 +95,7 @@
   }
 
   function onDown(e) {
-    if (overlay.style.display !== 'none') return;
+    if (!isGameActive) return;
     if (state !== 'idle') return;
     state = 'charging';
     chargeStartT = performance.now();
@@ -102,7 +103,7 @@
   }
 
   function onUp() {
-    if (state !== 'charging') return;
+    if (!isGameActive || state !== 'charging') return;
     state = 'flying';
     const chargeTime = (performance.now() - chargeStartT) / 1000;
     const powerRatio = Math.min(1, chargeTime / 1.5);
@@ -125,7 +126,7 @@
   window.addEventListener('pointerup', onUp, { passive: true });
 
   startBtn.addEventListener('click', ()=>start());
-  overlay.addEventListener('click', ()=>{ if (overlay.style.display !== 'none') start(); });
+  overlay.addEventListener('click', ()=>{ if (!isGameActive) start(); });
 
   function resetGame(){
     state = 'idle';
@@ -139,13 +140,14 @@
   function start(){
     resetGame();
     overlay.style.display='none';
+    isGameActive = true;
   }
 
   function loop(t){
     const dt = Math.min(0.033, (t - (tPrev || t))/1000);
     tPrev=t;
     
-    if (overlay.style.display === 'none') {
+    if (isGameActive) {
       update(dt);
     }
     draw(t);
@@ -170,7 +172,7 @@
           stone.vx *= 0.9;
           ripples.push({ x: stone.x, y: stone.y, r: 0, life: 1 });
           currentCombo++;
-          score++; // 튕길 때마다 1점씩
+          score++;
           scoreEl.childNodes[0].nodeValue = `점수 ${score} `;
           comboEl.textContent = `${currentCombo} 번`;
           comboEl.classList.remove('show');
@@ -202,22 +204,23 @@
   }
 
   function drawBackground(t) {
+    // [오류 수정] CSS 변수가 아닌, 실제 색상 코드를 직접 사용합니다.
     const skyGrad = ctx.createLinearGradient(0,0,0,CFG.waterLevel);
-    skyGrad.addColorStop(0, CFG.skyTop);
-    skyGrad.addColorStop(1, CFG.skyBottom);
+    skyGrad.addColorStop(0, '#77a1d3');
+    skyGrad.addColorStop(1, '#e29587');
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0,0,CFG.W,CFG.H);
     
     const waterGrad = ctx.createLinearGradient(0,CFG.waterLevel,0,CFG.H);
-    waterGrad.addColorStop(0, CFG.waterTop);
-    waterGrad.addColorStop(1, CFG.waterBottom);
+    waterGrad.addColorStop(0, '#3a7bd5');
+    waterGrad.addColorStop(1, '#00d2ff');
     ctx.fillStyle = waterGrad;
     ctx.fillRect(0,CFG.waterLevel,CFG.W,CFG.H - CFG.waterLevel);
     
     ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = 2;
     for(let i=0; i<10; i++) {
-        const time = t || performance.now();
+        const time = performance.now();
         ctx.beginPath();
         ctx.moveTo(0, CFG.waterLevel + i * 15 + Math.sin(time/1000 + i) * 5);
         ctx.quadraticCurveTo(CFG.W/2, CFG.waterLevel + i * 15 + Math.cos(time/1000 + i) * 5, CFG.W, CFG.waterLevel + i * 15 + Math.sin(time/1000 + i*2) * 5);
@@ -269,17 +272,23 @@
     drawBackground(t);
     drawRipples();
 
+    if (!isGameActive) {
+      ctx.fillStyle = '#555';
+      ctx.beginPath();
+      ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
     if (state === 'flying') {
         drawStone();
     } else if (state === 'charging') {
         drawChargingUI();
-        // 충전 중일 때도 대기 상태의 돌멩이를 그림
         ctx.fillStyle = '#555';
         ctx.beginPath();
         ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
         ctx.fill();
     } else if (state === 'idle') {
-        // 대기 상태에서 돌멩이 그리기
         ctx.fillStyle = '#555';
         ctx.beginPath();
         ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
