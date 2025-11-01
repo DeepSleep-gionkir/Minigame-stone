@@ -68,14 +68,12 @@
   let DPR = Math.min(2, window.devicePixelRatio || 1);
   function fit(){ const ar = CFG.W/CFG.H; const vw = window.innerWidth, vh = window.innerHeight; let dw, dh; if (vw/vh > ar){ dh = vh; dw = vh*ar; } else { dw = vw; dh = vw/ar; } cv.style.width = dw+'px'; cv.style.height = dh+'px'; DPR = Math.min(2, window.devicePixelRatio||1); cv.width = Math.floor(CFG.W*DPR); cv.height = Math.floor(CFG.H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0); }
   window.addEventListener('resize', fit, { passive: true });
-  fit();
-
+  
   let hiScore = Number(localStorage.getItem('ss_hi')||0)||0; hiEl.textContent = `최고 ${hiScore}`;
 
   let state = 'idle';
   let tPrev=0, score=0, currentCombo=0;
   let chargeStartT = 0;
-  let idleLoopId;
   
   let stone = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, r: 10, inWater: false };
   const ripples = [];
@@ -96,7 +94,7 @@
   }
 
   function onDown(e) {
-    if (state !== 'idle') return;
+    if (state !== 'idle' || overlay.style.display !== 'none') return;
     state = 'charging';
     chargeStartT = performance.now();
     e.preventDefault();
@@ -138,24 +136,16 @@
   }
 
   function start(){
-    if (idleLoopId) cancelAnimationFrame(idleLoopId);
     resetGame();
     overlay.style.display='none';
-    tPrev=performance.now();
-    requestAnimationFrame(loop);
   }
 
   function loop(t){
-    const dt = Math.min(0.033, (t - tPrev)/1000);
+    const dt = Math.min(0.033, (t - (tPrev || t))/1000);
     tPrev=t;
     update(dt);
     draw(t);
     requestAnimationFrame(loop);
-  }
-  
-  function idleLoop(t = 0) {
-    draw(t);
-    idleLoopId = requestAnimationFrame(idleLoop);
   }
 
   function update(dt){
@@ -229,7 +219,7 @@
     }
   }
   
-  function drawChargingUI(t) {
+  function drawChargingUI() {
     const angleRatio = 0.5 + Math.sin(performance.now() / 500) * 0.5;
     const powerRatio = Math.min(1, (performance.now() - chargeStartT) / 1500);
     const angle = CFG.minAngle + (CFG.maxAngle - CFG.minAngle) * angleRatio;
@@ -275,16 +265,19 @@
     if (state === 'flying') {
         drawStone();
     } else if (state === 'charging') {
-        drawChargingUI(t);
+        drawChargingUI();
+    } else if (state === 'idle') {
+        // 대기 상태에서도 돌멩이 그리기
+        ctx.fillStyle = '#555';
+        ctx.beginPath();
+        ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
     }
   }
 
-  resetGame();
   fit();
-  
-  if (overlay.style.display !== 'none') {
-    idleLoop();
-  }
+  resetGame();
+  requestAnimationFrame(loop);
   </script>
 </body>
 </html>
