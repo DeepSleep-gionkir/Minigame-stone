@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Stone Skipping Game</title>
+  <style>
+    :root {
+      --sky-top: #77a1d3;
+      --sky-bottom: #e29587;
+      --water-top: #3a7bd5;
+      --water-bottom: #00d2ff;
+      --text: #fff;
+    }
+
+    html, body { height: 100%; margin: 0; background: var(--sky-top); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Arial, Apple Color Emoji, Segoe UI Emoji; overscroll-behavior: none; }
+
+    .wrap { position: fixed; inset: 0; display: grid; place-items: center; }
+    canvas { display: block; background: transparent; touch-action: none; cursor: pointer; }
+
+    .hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 1px 4px #00000055; }
+    .score { position: absolute; top: env(safe-area-inset-top, 12px); left: 12px; padding: 6px 10px; font-weight: 700; letter-spacing: 0.5px; user-select: none; }
+    .hi { margin-left: 8px; opacity: .75; font-weight: 600; }
+    .combo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 80px; font-weight: 900; opacity: 0; transition: opacity 0.3s, transform 0.3s; }
+    .combo.show { transform: translate(-50%, -70%); opacity: 1; }
+    .combo-text { font-size: 0.4em; font-weight: 700; opacity: 0.8; }
+    
+    .overlay { position: fixed; inset: 0; display: grid; place-items: center; background: linear-gradient(180deg, #0008, #0004); backdrop-filter: blur(3px); z-index: 4; }
+    .panel { pointer-events: auto; text-align: center; padding: 18px 20px; border-radius: 16px; background: #0c112480; border: 1px solid #ffffff18; box-shadow: 0 10px 30px #0009; max-width: min(90vw, 420px); }
+    .title { font-size: 18px; margin-bottom: 10px; font-weight: 800; }
+    .sub { opacity: .8; font-size: 13px; margin-bottom: 14px; }
+    .btn { margin-top: 6px; appearance: none; border: 0; border-radius: 14px; background: linear-gradient(180deg, #81C784, #4CAF50); color: white; padding: 12px 16px; font-weight: 800; letter-spacing: .4px; cursor: pointer; box-shadow: 0 8px 18px #4caf5055, inset 0 0 0 1px #ffffff30; }
+    .btn:active { transform: translateY(1px); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="cv" width="360" height="640" aria-label="Stone Skipping Game Canvas"></canvas>
+  </div>
+
+  <div class="hud">
+    <div class="score" id="score">점수 0 <span class="hi" id="hi">최고 0</span></div>
+    <div class="combo" id="combo">0 <span class="combo-text">번</span></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="panel">
+      <div class="title">고요한 연못, 돌멩이 튕기기</div>
+      <div class="sub">화면을 눌러 각도와 힘을 조절하고, 손을 떼서 최고의 물수제비를 만들어보세요!</div>
+      <button class="btn" id="startBtn">시작하기</button>
+    </div>
+  </div>
+
+  <script>
+  const CFG = { 
+    W: 360, H: 640, waterLevel: 450, gravity: 1200,
+    throwX: 60, throwY: 550, minAngle: -0.3, maxAngle: 0
+  };
+
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const scoreEl = document.getElementById('score');
+  const hiEl = document.getElementById('hi');
+  const comboEl = document.getElementById('combo');
+
+  let DPR = Math.min(2, window.devicePixelRatio || 1);
+  function fit(){ const ar = CFG.W/CFG.H; const vw = window.innerWidth, vh = window.innerHeight; let dw, dh; if (vw/vh > ar){ dh = vh; dw = vh*ar; } else { dw = vw; dh = vw/ar; } cv.style.width = dw+'px'; cv.style.height = dh+'px'; DPR = Math.min(2, window.devicePixelRatio||1); cv.width = Math.floor(CFG.W*DPR); cv.height = Math.floor(CFG.H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0); }
+  window.addEventListener('resize', fit, { passive: true });
+  fit();
+
+  let hiScore = Number(localStorage.getItem('ss_hi')||0)||0; hiEl.textContent = `최고 ${hiScore}`;
+
+  let state = 'idle';
+  let tPrev=0, score=0, currentCombo=0;
+  let chargeStartT = 0;
+  let idleLoopId;
+  
+  let stone = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, r: 10, inWater: false };
+  const ripples = [];
+  
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  function playSound(freq, duration = 0.1) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    oscillator.type = 'sine';
+    oscillator.frequency.value = freq;
+    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + duration);
+  }
+
+  function onDown(e) {
+    if (state !== 'idle') return;
+    state = 'charging';
+    chargeStartT = performance.now();
+    e.preventDefault();
+  }
+
+  function onUp() {
+    if (state !== 'charging') return;
+    state = 'flying';
+    const chargeTime = (performance.now() - chargeStartT) / 1000;
+    const powerRatio = Math.min(1, chargeTime / 1.5);
+    const angleRatio = 0.5 + Math.sin(chargeStartT / 500) * 0.5;
+
+    const throwAngle = CFG.minAngle + (CFG.maxAngle - CFG.minAngle) * angleRatio;
+    const throwPower = 600 + 400 * powerRatio;
+    
+    stone.x = CFG.throwX;
+    stone.y = CFG.throwY;
+    stone.vx = Math.cos(throwAngle) * throwPower;
+    stone.vy = Math.sin(throwAngle) * throwPower;
+    stone.angle = 0;
+    stone.inWater = false;
+    currentCombo = 0;
+    comboEl.classList.remove('show');
+  }
+  
+  cv.addEventListener('pointerdown', onDown, { passive: false });
+  window.addEventListener('pointerup', onUp, { passive: true });
+
+  startBtn.addEventListener('click', ()=>start());
+  overlay.addEventListener('click', ()=>{ if (overlay.style.display !== 'none') start(); });
+
+  function resetGame(){
+    state = 'idle';
+    score = 0;
+    scoreEl.textContent = `점수 0 `; scoreEl.appendChild(hiEl);
+    ripples.length = 0;
+    currentCombo = 0;
+    comboEl.classList.remove('show');
+  }
+
+  function start(){
+    if (idleLoopId) cancelAnimationFrame(idleLoopId);
+    resetGame();
+    overlay.style.display='none';
+    tPrev=performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function loop(t){
+    const dt = Math.min(0.033, (t - tPrev)/1000);
+    tPrev=t;
+    update(dt);
+    draw(t);
+    requestAnimationFrame(loop);
+  }
+  
+  function idleLoop(t = 0) {
+    draw(t);
+    idleLoopId = requestAnimationFrame(idleLoop);
+  }
+
+  function update(dt){
+    if (state === 'flying') {
+      stone.vy += CFG.gravity * dt;
+      stone.x += stone.vx * dt;
+      stone.y += stone.vy * dt;
+      stone.angle += 5 * dt;
+
+      if (!stone.inWater && stone.y > CFG.waterLevel) {
+        const speed = Math.sqrt(stone.vx * stone.vx + stone.vy * stone.vy);
+        const impactAngle = Math.atan2(stone.vy, stone.vx);
+
+        if (speed > 200 && impactAngle > 0 && impactAngle < 0.3) {
+          stone.y = CFG.waterLevel;
+          stone.vy *= -0.5;
+          stone.vx *= 0.9;
+          ripples.push({ x: stone.x, y: stone.y, r: 0, life: 1 });
+          currentCombo++;
+          comboEl.textContent = `${currentCombo} 번`;
+          comboEl.classList.remove('show');
+          void comboEl.offsetWidth;
+          comboEl.classList.add('show');
+          playSound(440 + currentCombo * 50, 0.2);
+        } else {
+          stone.inWater = true;
+          ripples.push({ x: stone.x, y: stone.y, r: 0, life: 1 });
+          score += currentCombo;
+          scoreEl.childNodes[0].nodeValue = `점수 ${score} `;
+          if (score > hiScore) {
+            hiScore = score;
+            localStorage.setItem('ss_hi', String(hiScore));
+            hiEl.textContent = `최고 ${hiScore}`;
+          }
+        }
+      }
+
+      if (stone.y > CFG.H + 50) {
+        state = 'idle';
+      }
+    }
+    
+    for(let i=ripples.length-1; i>=0; i--) {
+        const r = ripples[i];
+        r.r += 100 * dt;
+        r.life -= 0.8 * dt;
+        if (r.life <= 0) ripples.splice(i, 1);
+    }
+  }
+
+  function drawBackground(t) {
+    const skyGrad = ctx.createLinearGradient(0,0,0,CFG.waterLevel);
+    skyGrad.addColorStop(0, CFG.skyTop);
+    skyGrad.addColorStop(1, CFG.skyBottom);
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0,0,CFG.W,CFG.H);
+    
+    const waterGrad = ctx.createLinearGradient(0,CFG.waterLevel,0,CFG.H);
+    waterGrad.addColorStop(0, CFG.waterTop);
+    waterGrad.addColorStop(1, CFG.waterBottom);
+    ctx.fillStyle = waterGrad;
+    ctx.fillRect(0,CFG.waterLevel,CFG.W,CFG.H - CFG.waterLevel);
+    
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 2;
+    for(let i=0; i<10; i++) {
+        ctx.beginPath();
+        ctx.moveTo(0, CFG.waterLevel + i * 15 + Math.sin(t/1000 + i) * 5);
+        ctx.quadraticCurveTo(CFG.W/2, CFG.waterLevel + i * 15 + Math.cos(t/1000 + i) * 5, CFG.W, CFG.waterLevel + i * 15 + Math.sin(t/1000 + i*2) * 5);
+        ctx.stroke();
+    }
+  }
+  
+  function drawChargingUI(t) {
+    const angleRatio = 0.5 + Math.sin(performance.now() / 500) * 0.5;
+    const powerRatio = Math.min(1, (performance.now() - chargeStartT) / 1500);
+    const angle = CFG.minAngle + (CFG.maxAngle - CFG.minAngle) * angleRatio;
+    
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(CFG.throwX - 40, CFG.throwY + 20, 80 * powerRatio, 10);
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(CFG.throwX - 40, CFG.throwY + 20, 80, 10);
+
+    ctx.beginPath();
+    ctx.moveTo(CFG.throwX, CFG.throwY);
+    ctx.lineTo(CFG.throwX + Math.cos(angle) * 100, CFG.throwY + Math.sin(angle) * 100);
+    ctx.stroke();
+  }
+
+  function drawStone() {
+    ctx.save();
+    ctx.translate(stone.x, stone.y);
+    ctx.rotate(stone.angle);
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, stone.r, stone.r * 0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawRipples() {
+    for(const r of ripples) {
+        ctx.strokeStyle = `rgba(255,255,255,${r.life * 0.5})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.r, 0, Math.PI*2);
+        ctx.stroke();
+    }
+  }
+
+  function circle(x,y,r){ ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); }
+
+  function draw(t) {
+    drawBackground(t);
+    drawRipples();
+
+    if (state === 'flying') {
+        drawStone();
+    } else if (state === 'charging') {
+        drawChargingUI(t);
+    }
+  }
+
+  resetGame();
+  fit();
+  
+  if (overlay.style.display !== 'none') {
+    idleLoop();
+  }
+  </script>
+</body>
+</html>
