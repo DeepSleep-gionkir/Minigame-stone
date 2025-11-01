@@ -273,11 +273,13 @@
         drawStone();
     } else if (state === 'charging') {
         drawChargingUI();
+        // 충전 중일 때도 대기 상태의 돌멩이를 그림
         ctx.fillStyle = '#555';
         ctx.beginPath();
         ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
         ctx.fill();
     } else if (state === 'idle') {
+        // 대기 상태에서 돌멩이 그리기
         ctx.fillStyle = '#555';
         ctx.beginPath();
         ctx.ellipse(CFG.throwX, CFG.throwY, 10, 5, 0, 0, Math.PI * 2);
